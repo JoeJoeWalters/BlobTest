@@ -3,6 +3,7 @@ using Bogus;
 using Bogus.DataSets;
 using Bogus.Extensions.UnitedKingdom;
 using static Bogus.DataSets.Name;
+using Newtonsoft.Json;
 
 var fakeAddress = new Faker<Common.Address>("en_GB")
     .RuleFor(a => a.AddressLine1, (f, a) => f.Address.StreetAddress())
@@ -23,6 +24,13 @@ while (!false)
     Common.Person person = fakePerson.Generate();
     person.Address = fakeAddress.Generate();
 
+    HttpClient httpClient = new HttpClient();
+    httpClient.BaseAddress = new Uri("http://localhost:7162/api/person");
+    HttpContent content = new StringContent(JsonConvert.SerializeObject(person));
+    HttpResponseMessage HttpResponseMessage = httpClient.PostAsync("http://localhost:7162/api/person", content).Result;
+
     Thread.Sleep(1000);
+
+    // https://github.com/JoshClose/CsvHelper/issues/347
 
 }
