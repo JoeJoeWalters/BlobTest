@@ -29,8 +29,5 @@ while (!false)
     HttpContent content = new StringContent(JsonConvert.SerializeObject(person));
     HttpResponseMessage HttpResponseMessage = httpClient.PostAsync("http://localhost:7162/api/person", content).Result;
 
-    Thread.Sleep(1000);
-
-    // https://github.com/JoshClose/CsvHelper/issues/347
-
+    Thread.Sleep(500);
 }
