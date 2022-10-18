@@ -21,13 +21,22 @@ var fakePerson = new Faker<Common.Person>("en_GB")
 
 while (!false)
 {
-    Common.Person person = fakePerson.Generate();
-    person.Address = fakeAddress.Generate();
+    try
+    {
 
-    HttpClient httpClient = new HttpClient();
-    httpClient.BaseAddress = new Uri("http://localhost:7162/api/person");
-    HttpContent content = new StringContent(JsonConvert.SerializeObject(person));
-    HttpResponseMessage HttpResponseMessage = httpClient.PostAsync("http://localhost:7162/api/person", content).Result;
+        Common.Person person = fakePerson.Generate();
+        person.Address = fakeAddress.Generate();
 
-    Thread.Sleep(500);
+        HttpClient httpClient = new HttpClient();
+        httpClient.BaseAddress = new Uri("http://localhost:7162/api/person");
+        HttpContent content = new StringContent(JsonConvert.SerializeObject(person));
+        HttpResponseMessage HttpResponseMessage = httpClient.PostAsync("http://localhost:7162/api/person", content).Result;
+
+        Thread.Sleep(100);
+    }
+    catch(Exception ex)
+    {
+
+        Thread.Sleep(500);
+    }
 }
