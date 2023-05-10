@@ -28,9 +28,6 @@ while (!false)
         Common.Person person = fakePerson.Generate();
         person.Address = fakeAddress.Generate();
 
-<<<<<<< HEAD
-    Thread.Sleep(100);
-=======
         HttpClient httpClient = new HttpClient();
         httpClient.BaseAddress = new Uri("http://localhost:7162/api/person");
         HttpContent content = new StringContent(JsonConvert.SerializeObject(person));
@@ -43,5 +40,4 @@ while (!false)
 
         Thread.Sleep(500);
     }
->>>>>>> c547863421b579cafe058cd87b64a2f9450b58dc
 }
