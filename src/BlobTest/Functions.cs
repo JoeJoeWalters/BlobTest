@@ -15,6 +15,8 @@ using System.Text;
 using CsvHelper.Configuration;
 using CsvHelper;
 using System.Globalization;
+using System.Runtime.CompilerServices;
+using System.Linq;
 
 namespace BlobTest
 {
@@ -34,7 +36,6 @@ namespace BlobTest
     {
         private string _ConnectionString = "UseDevelopmentStorage=true";
         private string _BlobContainer = "reports";
-        private string _BlobName = "data.csv";
 
         /// <summary>
         /// Http Endpoint that receives the initial data
@@ -88,12 +89,21 @@ namespace BlobTest
             string csv = PersonToCSV(person);
 
             // Append the data to the blob
-            AppendBlob(_BlobName, csv);
+            AppendBlob(CreateBlobName(person), csv);
 
             // Write the message to the next queue
             InsertMessage("remotes", message);
 
             log.LogInformation($"Message written to next queue");
+        }
+
+        private string CreateBlobName(Common.Person person)
+        {
+            string path = person.Account.Chunk(4).Select(charArray => new string(charArray)).Aggregate((partialPhrase, word) => $"{partialPhrase}/{word}");
+            DateTime now = DateTime.Now;
+            string dateComponent = $"{now.Year.ToString().PadLeft(2, '0')}/{now.Month.ToString().PadLeft(2, '0')}/{now.Day.ToString().PadLeft(2, '0')}";
+            string combinedPath = $"{path}/{dateComponent}/{person.Account}.csv";
+            return combinedPath; // Only seperate so we can debug for now
         }
 
         /// <summary>
@@ -169,7 +179,7 @@ namespace BlobTest
             containerClient.CreateIfNotExists();
 
             // Set up a client specifically to append data quickly
-            var appendBlobClient = containerClient.GetAppendBlobClient(_BlobName);
+            var appendBlobClient = containerClient.GetAppendBlobClient(blobName);
             appendBlobClient.CreateIfNotExists();
 
             // As we are going to be well under the append limit we don't need to worry about splitting the writes

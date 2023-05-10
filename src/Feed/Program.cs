@@ -14,6 +14,7 @@ var fakeAddress = new Faker<Common.Address>("en_GB")
     .RuleFor(a => a.PostalCode, (f, a) => f.Address.ZipCode());
 
 var fakePerson = new Faker<Common.Person>("en_GB")
+    .RuleFor(p => p.Account, f => f.Random.ReplaceNumbers("00000000####"))
     .RuleFor(p => p.Gender, f => f.PickRandom<Common.Gender>())
     .RuleFor(p => p.Name, (f, u) => f.Name.FirstName((Name.Gender)u.Gender))
     .RuleFor(p => p.Surname, (f, u) => f.Name.LastName((Name.Gender)u.Gender))
@@ -29,5 +30,5 @@ while (!false)
     HttpContent content = new StringContent(JsonConvert.SerializeObject(person));
     HttpResponseMessage HttpResponseMessage = httpClient.PostAsync("http://localhost:7162/api/person", content).Result;
 
-    Thread.Sleep(500);
+    Thread.Sleep(100);
 }
