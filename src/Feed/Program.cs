@@ -1,37 +1,36 @@
-﻿using Common;
-using Bogus;
-using Bogus.DataSets;
-using Bogus.Extensions.UnitedKingdom;
-using static Bogus.DataSets.Name;
+﻿using Bogus;
+using Common;
 using Newtonsoft.Json;
 
-var fakeAddress = new Faker<Common.Address>("en_GB")
-    .RuleFor(a => a.AddressLine1, (f, a) => f.Address.StreetAddress())
-    .RuleFor(a => a.AddressLine2, (f, a) => f.Address.SecondaryAddress())
-    .RuleFor(a => a.BuildingNumber, (f, a) => f.Address.BuildingNumber())
-    .RuleFor(a => a.City, (f, a) => f.Address.City())
-    .RuleFor(a => a.State, (f, a) => f.Address.County())
-    .RuleFor(a => a.PostalCode, (f, a) => f.Address.ZipCode());
+//var challengeMethods = new List<String>() { "OTP", "OOB", "BIO", "None" };
 
-var fakePerson = new Faker<Common.Person>("en_GB")
-    .RuleFor(p => p.Account, f => f.Random.ReplaceNumbers("00000000####"))
-    .RuleFor(p => p.Gender, f => f.PickRandom<Common.Gender>())
-    .RuleFor(p => p.Name, (f, u) => f.Name.FirstName((Name.Gender)u.Gender))
-    .RuleFor(p => p.Surname, (f, u) => f.Name.LastName((Name.Gender)u.Gender))
-    .RuleFor(p => p.EMail, (f, u) => f.Internet.Email(u.Name, u.Surname));
+var fakeLog = new Faker<Log>("en_GB")
+    .RuleFor(p => p.Account, f => f.Random.ReplaceNumbers("0000000000##"))
+    .RuleFor(p => p.Timestamp, f => f.Date.Between(DateTime.UtcNow.AddDays(-30), DateTime.UtcNow));
+
+var fakeRequest = new Faker<PurchaseRequest>("en_GB")
+    .RuleFor(p => p.Currency, p => p.Finance.Currency(false).Code)
+    .RuleFor(p => p.Amount, p => p.Finance.Amount(0, 1000, 2))
+    .RuleFor(p => p.Merchant, p => p.Company.CompanyName())
+    .RuleFor(p => p.Country, p => p.Address.CountryCode());
+
+var fakeResponse = new Faker<PurchaseResponse>()
+    .RuleFor(p => p.Authorised, p => p.PickRandom<bool>())
+    .RuleFor(p => p.ChallengeMethod, p => p.Random.ArrayElement<string>(new string[]{ "OTP", "OOB", "BIO", "None" }));
 
 while (!false)
 {
     try
     {
 
-        Common.Person person = fakePerson.Generate();
-        person.Address = fakeAddress.Generate();
+        Log log = fakeLog.Generate();
+        log.Request = fakeRequest.Generate();
+        //log.Response = fakeResponse.Generate();
 
         HttpClient httpClient = new HttpClient();
-        httpClient.BaseAddress = new Uri("http://localhost:7162/api/person");
-        HttpContent content = new StringContent(JsonConvert.SerializeObject(person));
-        HttpResponseMessage HttpResponseMessage = httpClient.PostAsync("http://localhost:7162/api/person", content).Result;
+        httpClient.BaseAddress = new Uri("http://localhost:7162/api/log");
+        HttpContent content = new StringContent(JsonConvert.SerializeObject(log));
+        HttpResponseMessage HttpResponseMessage = httpClient.PostAsync("http://localhost:7162/api/log", content).Result;
 
         Thread.Sleep(100);
     }

@@ -1,6 +1,6 @@
-using Azure.Storage.Queues;
 using Azure.Storage.Blobs;
 using Azure.Storage.Blobs.Specialized;
+using Azure.Storage.Queues;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Azure.WebJobs;
 using Microsoft.Azure.WebJobs.Extensions.Http;
@@ -8,34 +8,23 @@ using Microsoft.Extensions.Logging;
 using Newtonsoft.Json;
 using System;
 using System.IO;
+using System.Linq;
 using System.Net;
 using System.Net.Http;
-using System.Threading.Tasks;
 using System.Text;
-using CsvHelper.Configuration;
-using CsvHelper;
-using System.Globalization;
-using System.Runtime.CompilerServices;
-using System.Linq;
+using System.Threading.Tasks;
 
 namespace BlobTest
 {
-    public class PersonMap : ClassMap<Common.Person>
+    public class AppendResponse
     {
-        public PersonMap()
-        {
-            Map(m => m.Id).Index(0).Name("id");
-            Map(m => m.Name).Index(1).Name("name");
-            Map(m => m.Surname).Index(2).Name("surname");
-            Map(m => m.Address.AddressLine1).Index(3).Name("addressline1");
-            Map(m => m.Address.PostalCode).Index(4).Name("postalcode");
-        }
+        public Boolean Existing { get; set; } = false;
     }
 
     public class Functions
     {
         private string _ConnectionString = "UseDevelopmentStorage=true";
-        private string _BlobContainer = "reports";
+        private string _BlobContainer = "logs";
 
         /// <summary>
         /// Http Endpoint that receives the initial data
@@ -45,7 +34,7 @@ namespace BlobTest
         /// <returns></returns>
         [FunctionName("HttpEndpoint")]
         public async Task<HttpResponseMessage> HttpEndpoint(
-            [HttpTrigger(AuthorizationLevel.Function, "post", Route = "person")]
+            [HttpTrigger(AuthorizationLevel.Function, "post", Route = "log")]
             HttpRequest req,
             ILogger log)
         {
@@ -55,68 +44,21 @@ namespace BlobTest
                 var content = await new StreamReader(req.Body).ReadToEndAsync();
 
                 // Unpack the body and try and convert it to a known type
-                Common.Person person = JsonConvert.DeserializeObject<Common.Person>(content);
+                Common.Log data = JsonConvert.DeserializeObject<Common.Log>(content);
 
                 // Generate the content of the queue message we want to pass on to the next stage (e.g. writing to blob)
-                string messageContent = JsonConvert.SerializeObject(person);
+                string messageContent = JsonConvert.SerializeObject(data);
 
                 // Send the message on
-                InsertMessage("reporting", messageContent);
+                InsertMessage("logs", messageContent);
 
                 // Report back to the caller that the data is "safe" but not yet processed
                 return new HttpResponseMessage() { StatusCode = HttpStatusCode.Accepted }; // Not "OK" as we have stored the data for further processing
             }
-            catch(Exception ex)
+            catch (Exception ex)
             {
                 return new HttpResponseMessage() { StatusCode = HttpStatusCode.BadRequest, Content = new StringContent(ex.Message) }; // A bit too generic for now, but analyse error type before deciding
             }
-        }
-
-        /// <summary>
-        /// Trigger to anything that enters the blob queue so we can take that message and process it to blob before sending on anywhere else
-        /// </summary>
-        /// <param name="message"></param>
-        /// <param name="log"></param>
-        [FunctionName("BlobQueue")]
-        public void BlobQueue([QueueTrigger("reporting", Connection = "AzureWebJobsStorage")]string message, ILogger log)
-        {
-            log.LogInformation($"Processing For Blob: {message}");
-
-            // Unpack the body and try and convert it to a known type
-            Common.Person person = JsonConvert.DeserializeObject<Common.Person>(message);
-
-            // Cast the person object to a csv line capable of being written to the blob
-            string csv = PersonToCSV(person);
-
-            // Append the data to the blob
-            AppendBlob(CreateBlobName(person), csv);
-
-            // Write the message to the next queue
-            InsertMessage("remotes", message);
-
-            log.LogInformation($"Message written to next queue");
-        }
-
-        private string CreateBlobName(Common.Person person)
-        {
-            string path = person.Account.Chunk(4).Select(charArray => new string(charArray)).Aggregate((partialPhrase, word) => $"{partialPhrase}/{word}");
-            DateTime now = DateTime.Now;
-            string dateComponent = $"{now.Year.ToString().PadLeft(2, '0')}/{now.Month.ToString().PadLeft(2, '0')}/{now.Day.ToString().PadLeft(2, '0')}";
-            string combinedPath = $"{path}/{dateComponent}/{person.Account}.csv";
-            return combinedPath; // Only seperate so we can debug for now
-        }
-
-        /// <summary>
-        /// React to any messages placed on the reporting queue (Where we want to transmit the data elsewhere)
-        /// </summary>
-        /// <param name="message"></param>
-        /// <param name="log"></param>
-        [FunctionName("RemoteQueue")]
-        public void RemoteQueue([QueueTrigger("remotes", Connection = "AzureWebJobsStorage")] string message, ILogger log)
-        {
-            log.LogInformation($"Processing For Remote: {message}");
-
-            log.LogInformation($"Message completed");
         }
 
         /// <summary>
@@ -145,25 +87,31 @@ namespace BlobTest
         }
 
         /// <summary>
-        /// Convert a person object to the CSV format to save to the blob
+        /// Trigger to anything that enters the blob queue so we can take that message and process it to blob before sending on anywhere else
         /// </summary>
-        /// <param name="person"></param>
-        /// <returns></returns>
-        public string PersonToCSV(Common.Person person)
+        /// <param name="message"></param>
+        /// <param name="log"></param>
+        [FunctionName("BlobQueue")]
+        public void BlobQueue([QueueTrigger("logs", Connection = "AzureWebJobsStorage")] string message, ILogger log)
         {
-            // https://joshclose.github.io/CsvHelper/getting-started/
-            using (var memoryStream = new MemoryStream())
-            {
-                using (var writer = new StreamWriter(memoryStream))
-                using (var csv = new CsvWriter(writer, CultureInfo.InvariantCulture))
-                {
-                    csv.Context.RegisterClassMap<PersonMap>(); // Tell it how to write the CSV
-                    csv.WriteRecord(person);
-                    csv.NextRecord(); // Force a line break
-                }
+            log.LogInformation($"Processing For Blob: {message}");
 
-                return Encoding.UTF8.GetString(memoryStream.ToArray());
-            }
+            // Unpack the body and try and convert it to a known type
+            Common.Log toWrite = JsonConvert.DeserializeObject<Common.Log>(message);
+
+            // Append the data to the blob
+            AppendBlob(CreateBlobName(toWrite), message);
+
+            log.LogInformation($"Message written to next queue");
+        }
+
+        private string CreateBlobName(Common.Log log)
+        {
+            string path = log.Account.ToString(); //person.Account.Chunk(4).Select(charArray => new string(charArray)).Aggregate((partialPhrase, word) => $"{partialPhrase}/{word}");
+            DateTime logTime = log.Timestamp;
+            string dateComponent = $"{logTime.Year.ToString().PadLeft(2, '0')}/{logTime.Month.ToString().PadLeft(2, '0')}";
+            string combinedPath = $"{path}/{dateComponent}.json";
+            return combinedPath; // Only seperate so we can debug for now
         }
 
         /// <summary>
@@ -180,11 +128,14 @@ namespace BlobTest
 
             // Set up a client specifically to append data quickly
             var appendBlobClient = containerClient.GetAppendBlobClient(blobName);
+            StringBuilder stringBuilder = new StringBuilder(data);
+            if (appendBlobClient.Exists())  
+                stringBuilder.Insert(0, $"{Environment.NewLine},");
             appendBlobClient.CreateIfNotExists();
 
             // As we are going to be well under the append limit we don't need to worry about splitting the writes
             // so just dump the byte stream to the appendblock method
-            byte[] bytes = Encoding.UTF8.GetBytes(data);
+            byte[] bytes = Encoding.UTF8.GetBytes(stringBuilder.ToString());
             Stream stream = new MemoryStream(bytes);
             stream.Position = 0;
             appendBlobClient.AppendBlock(stream);
