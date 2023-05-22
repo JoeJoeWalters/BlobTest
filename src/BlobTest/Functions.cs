@@ -1,12 +1,16 @@
 using Azure.Storage.Blobs;
 using Azure.Storage.Blobs.Specialized;
 using Azure.Storage.Queues;
+using Common;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.Azure.WebJobs;
 using Microsoft.Azure.WebJobs.Extensions.Http;
 using Microsoft.Extensions.Logging;
+using Microsoft.OData.Edm;
 using Newtonsoft.Json;
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Net;
@@ -33,7 +37,7 @@ namespace BlobTest
         /// <param name="log"></param>
         /// <returns></returns>
         [FunctionName("HttpEndpoint")]
-        public async Task<HttpResponseMessage> HttpEndpoint(
+        public async Task<HttpResponseMessage> RecieveData(
             [HttpTrigger(AuthorizationLevel.Function, "post", Route = "log")]
             HttpRequest req,
             ILogger log)
@@ -59,6 +63,84 @@ namespace BlobTest
             {
                 return new HttpResponseMessage() { StatusCode = HttpStatusCode.BadRequest, Content = new StringContent(ex.Message) }; // A bit too generic for now, but analyse error type before deciding
             }
+        }
+
+        [FunctionName("QueryData")]
+        public async Task<HttpResponseMessage> QueryData(
+            [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "log")]
+            HttpRequest req,
+            ILogger log)
+        {
+            string accountNumber = req.Query.ContainsKey("accountNumber") ? req.Query["accountNumber"] : string.Empty;
+            if (string.IsNullOrEmpty(accountNumber))
+                return new HttpResponseMessage() { StatusCode = HttpStatusCode.BadRequest, Content = new StringContent("Missing Account Number") };
+
+            DateTime from = DateTime.UtcNow.AddDays(-30);
+            DateTime to = DateTime.UtcNow;
+
+            // Blobs that the data range could be in (will be filtered furher later once we have the data to check)
+            List<string> blobNames = PossibleBlobs(accountNumber, from, to);
+
+            // Grab and filter
+            List<Common.Log> logs = GetLogs(blobNames).Where(l => l.Timestamp >= from && l.Timestamp <= to).ToList();
+
+            try
+            {
+                return new HttpResponseMessage() { StatusCode = HttpStatusCode.OK, Content = new StringContent(JsonConvert.SerializeObject(logs, Formatting.Indented)) }; 
+            }
+            catch (Exception ex)
+            {
+                return new HttpResponseMessage() { StatusCode = HttpStatusCode.BadRequest, Content = new StringContent(ex.Message) };
+            }
+        }
+
+        private List<Common.Log> GetLogs(List<string> blobNames) 
+        {
+            List<Common.Log> response = new List<Log>();
+
+            // Create a new connection / client to enable writing blobs
+            BlobServiceClient blobServiceClient = new BlobServiceClient(_ConnectionString);
+            BlobContainerClient containerClient = blobServiceClient.GetBlobContainerClient(_BlobContainer);
+            containerClient.CreateIfNotExists();
+
+            // Set up a client specifically to append data quickly
+            foreach (string blobName in blobNames)
+            {
+                var appendBlobClient = containerClient.GetAppendBlobClient(blobName);
+                if (appendBlobClient.Exists())
+                {
+                    var download = appendBlobClient.DownloadContent();
+                    if (download.GetRawResponse().Status == 200)
+                    {
+                        string content = $"[{Encoding.UTF8.GetString(download.Value.Content)}]";
+                        try
+                        {
+                            var cast = JsonConvert.DeserializeObject<List<Common.Log>>(content);
+                            response.AddRange(cast);
+                        }
+                        catch (Exception ex)
+                        {
+                            // Deserialise issues trap here? Maybe .. check later
+                        }
+                    }
+                }
+            }
+
+            return response;
+        }
+
+        private List<string> PossibleBlobs(string accountNumber, DateTime from, DateTime to) 
+        {
+            List<string> blobs = new List<string>();
+
+            DateTime currentDate = from;
+            while (currentDate < to)
+            {
+                blobs.Add($"{accountNumber}/{currentDate.Year.ToString().PadLeft(2, '0')}/{currentDate.Month.ToString().PadLeft(2, '0')}.json");
+                currentDate = currentDate.AddMonths(1);
+            }
+
+            return blobs;
         }
 
         /// <summary>
