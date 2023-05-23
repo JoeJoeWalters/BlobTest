@@ -78,11 +78,8 @@ namespace BlobTest
             DateTime from = DateTime.UtcNow.AddDays(-30);
             DateTime to = DateTime.UtcNow;
 
-            // Blobs that the data range could be in (will be filtered furher later once we have the data to check)
-            List<string> blobNames = PossibleBlobs(accountNumber, from, to);
-
             // Grab and filter
-            List<Common.Log> logs = GetLogs(blobNames).Where(l => l.Timestamp >= from && l.Timestamp <= to).ToList();
+            List<Common.Log> logs = GetLogs(PossibleBlobs(accountNumber, from, to)).Where(l => l.Timestamp >= from && l.Timestamp <= to).ToList();
 
             try
             {
@@ -112,7 +109,8 @@ namespace BlobTest
                     var download = appendBlobClient.DownloadContent();
                     if (download.GetRawResponse().Status == 200)
                     {
-                        string content = $"[{Encoding.UTF8.GetString(download.Value.Content)}]";
+                        // Convert pseudo array that is stored to an actual array for deserialisation
+                        string content = $"[{Encoding.UTF8.GetString(download.Value.Content)}]"; 
                         try
                         {
                             var cast = JsonConvert.DeserializeObject<List<Common.Log>>(content);
