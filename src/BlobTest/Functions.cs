@@ -1,4 +1,5 @@
 using Azure.Storage.Blobs;
+using Azure.Storage.Blobs.Models;
 using Azure.Storage.Blobs.Specialized;
 using Azure.Storage.Queues;
 using Common;
@@ -79,11 +80,11 @@ namespace BlobTest
             DateTime to = DateTime.UtcNow;
 
             // Grab and filter
-            List<Common.Log> logs = GetLogs(PossibleBlobs(accountNumber, from, to)).Where(l => l.Timestamp >= from && l.Timestamp <= to).ToList();
+            List<Common.Log> logs = GetLogs(accountNumber, from, to).ToList();
 
             try
             {
-                return new HttpResponseMessage() { StatusCode = HttpStatusCode.OK, Content = new StringContent(JsonConvert.SerializeObject(logs, Formatting.Indented)) }; 
+                return new HttpResponseMessage() { StatusCode = HttpStatusCode.OK, Content = new StringContent(JsonConvert.SerializeObject(logs, Formatting.Indented)) };
             }
             catch (Exception ex)
             {
@@ -91,7 +92,7 @@ namespace BlobTest
             }
         }
 
-        private List<Common.Log> GetLogs(List<string> blobNames) 
+        private List<Common.Log> GetLogs(string accountNumber, DateTime from, DateTime to)
         {
             List<Common.Log> response = new List<Log>();
 
@@ -100,21 +101,27 @@ namespace BlobTest
             BlobContainerClient containerClient = blobServiceClient.GetBlobContainerClient(_BlobContainer);
             containerClient.CreateIfNotExists();
 
+            // Filter the blobs (Don't hold open the query, stash the tagged blobs first)
+            string query = @$"""Date"" >= '{from.ToString("yyyy-MM-dd")}' AND ""Date"" <= '{to.ToString("yyyy-MM-dd")}'";
+            List<TaggedBlobItem> filtered = new List<TaggedBlobItem>();
+            foreach (TaggedBlobItem taggedBlobItem in containerClient.FindBlobsByTags(query))
+                filtered.Add(taggedBlobItem);
+
             // Set up a client specifically to append data quickly
-            foreach (string blobName in blobNames)
+            foreach (TaggedBlobItem tagged in filtered)
             {
-                var appendBlobClient = containerClient.GetAppendBlobClient(blobName);
+                var appendBlobClient = containerClient.GetAppendBlobClient(tagged.BlobName);
                 if (appendBlobClient.Exists())
                 {
                     var download = appendBlobClient.DownloadContent();
                     if (download.GetRawResponse().Status == 200)
                     {
                         // Convert pseudo array that is stored to an actual array for deserialisation
-                        string content = $"[{Encoding.UTF8.GetString(download.Value.Content)}]"; 
+                        string content = Encoding.UTF8.GetString(download.Value.Content);
                         try
                         {
-                            var cast = JsonConvert.DeserializeObject<List<Common.Log>>(content);
-                            response.AddRange(cast);
+                            var cast = JsonConvert.DeserializeObject<Common.Log>(content);
+                            response.Add(cast);
                         }
                         catch (Exception ex)
                         {
@@ -125,20 +132,6 @@ namespace BlobTest
             }
 
             return response;
-        }
-
-        private List<string> PossibleBlobs(string accountNumber, DateTime from, DateTime to) 
-        {
-            List<string> blobs = new List<string>();
-
-            DateTime currentDate = from;
-            while (currentDate < to)
-            {
-                blobs.Add($"{accountNumber}/{currentDate.Year.ToString().PadLeft(2, '0')}/{currentDate.Month.ToString().PadLeft(2, '0')}.json");
-                currentDate = currentDate.AddMonths(1);
-            }
-
-            return blobs;
         }
 
         /// <summary>
@@ -180,17 +173,15 @@ namespace BlobTest
             Common.Log toWrite = JsonConvert.DeserializeObject<Common.Log>(message);
 
             // Append the data to the blob
-            AppendBlob(CreateBlobName(toWrite), message);
+            SaveBlob(CreateBlobName(toWrite), message, toWrite.Account, toWrite.Timestamp);
 
             log.LogInformation($"Message written to next queue");
         }
 
         private string CreateBlobName(Common.Log log)
         {
-            string path = log.Account.ToString(); //person.Account.Chunk(4).Select(charArray => new string(charArray)).Aggregate((partialPhrase, word) => $"{partialPhrase}/{word}");
             DateTime logTime = log.Timestamp;
-            string dateComponent = $"{logTime.Year.ToString().PadLeft(2, '0')}/{logTime.Month.ToString().PadLeft(2, '0')}";
-            string combinedPath = $"{path}/{dateComponent}.json";
+            string combinedPath = $"accounts/{log.Account}/{logTime.Year.ToString().PadLeft(2, '0')}/{logTime.Month.ToString().PadLeft(2, '0')}/{logTime.Day.ToString().PadLeft(2, '0')}/{log.Account}_{Guid.NewGuid().ToString()}.json";
             return combinedPath; // Only seperate so we can debug for now
         }
 
@@ -199,7 +190,7 @@ namespace BlobTest
         /// </summary>
         /// <param name="blobName"></param>
         /// <param name="data"></param>
-        public void AppendBlob(string blobName, string data)
+        public void SaveBlob(string blobName, string data, string accountNumber, DateTime timeTag)
         {
             // Create a new connection / client to enable writing blobs
             BlobServiceClient blobServiceClient = new BlobServiceClient(_ConnectionString);
@@ -209,7 +200,7 @@ namespace BlobTest
             // Set up a client specifically to append data quickly
             var appendBlobClient = containerClient.GetAppendBlobClient(blobName);
             StringBuilder stringBuilder = new StringBuilder(data);
-            if (appendBlobClient.Exists())  
+            if (appendBlobClient.Exists())
                 stringBuilder.Insert(0, $"{Environment.NewLine},");
             appendBlobClient.CreateIfNotExists();
 
@@ -219,6 +210,16 @@ namespace BlobTest
             Stream stream = new MemoryStream(bytes);
             stream.Position = 0;
             appendBlobClient.AppendBlock(stream);
+
+            Dictionary<string, string> tags = new Dictionary<string, string>
+            {
+                { "AccountNumber", $"{accountNumber}" },
+                { "Day", $"{timeTag.Day}" },
+                { "Month", $"{timeTag.Month}" },
+                { "Year", $"{timeTag.Year}" },
+                { "Date", timeTag.ToString("yyyy-MM-dd") }
+            };
+            appendBlobClient.SetTags(tags);
         }
     }
 }
